@@ -1,164 +1,202 @@
-#!/bin/sh
+#!/bin/bash
+
 
 # Exit if any subcommand fails
 set -e
 
-# Config
+# --- Configuration ---
+
+# List of command-line tools to install
+formulae=(
+	git
+	node@20 # Pinned to version 20
+	yarn
+)
+
+# List of GUI applications to install
+casks=(
+	visual-studio-code
+	github
+	rectangle
+	sourcetree
+	karabiner-elements
+	notion
+	obsidian
+	maccy
+	webcatalog
+	figma
+	1password
+	cursor
+	warp
+)
+
+# --- Functions ---
 
 show_intro() {
-	cat << EOF
+	cat <<EOF
 
-$0 will setup your Mac with the following:
-
-* [Homebrew](https://brew.sh)
-* [Node Version Manager](https://github.com/nvm-sh/nvm)
-* [Node.js](https://nodejs.org)
-* [Yarn](https://yarnpkg.com/)
-* [Visual Studio Code](https://code.visualstudio.com/)
-* [SSH keys](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)
+$0 will setup your Mac.
+Press Enter to review the packages and continue...
 
 EOF
 }
-
-# Functions
 
 wait_for_enter() {
 	read -p "Press Enter to continue... "
 	echo
 }
 
-get_user_email() {
-	read -p "Enter your email: " USER_EMAIL
+get_user_info() {
+	read -p "Enter your email for Git and SSH: " USER_EMAIL
+	read -p "Enter your full name for Git: " USER_FULL_NAME
 }
 
-get_user_full_name() {
-	read -p "Enter your full name: " USER_FULL_NAME
-}
-
-clone_repo() {
-	echo "Cloning repo $1"
-	git clone "$1"
-}
-
+# Makes the script architecture-aware (Intel vs Apple Silicon)
 setup_homebrew() {
 	if ! command -v brew >/dev/null 2>&1; then
-		echo "Install Homebrew"
+		echo "Installing Homebrew..."
 		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+	fi
 
-		echo "Configure Homebrew"
-		(echo; echo 'eval "$(/usr/local/bin/brew shellenv)"') >> "$HOME/.zprofile"
-		eval "$(/usr/local/bin/brew shellenv)"
+	echo "Configuring Homebrew Shell Environment..."
+	local brew_path
+	if [[ -x "/opt/homebrew/bin/brew" ]]; then # Apple Silicon
+		brew_path="/opt/homebrew/bin/brew"
+	elif [[ -x "/usr/local/bin/brew" ]]; then # Intel
+		brew_path="/usr/local/bin/brew"
+	else
+		echo "ERROR: Homebrew installation not found." >&2
+		exit 1
+	fi
+
+	eval "$($brew_path shellenv)"
+	# Add to .zprofile to make it available in new shells
+	if ! grep -q "$brew_path shellenv" "$HOME/.zprofile"; then
+		(echo; echo "eval \"\$($brew_path shellenv)\"") >> "$HOME/.zprofile"
 	fi
 }
 
+install_packages() {
+	echo "Installing Homebrew formulae..."
+	for formula in "${formulae[@]}"; do
+		if ! brew list "$formula" &>/dev/null; then
+			echo "Installing $formula..."
+			brew install "$formula"
+		else
+			echo "$formula is already installed."
+		fi
+	done
 
-setup_node() {
-	if ! command -v node >/dev/null 2>&1; then
-		echo "Install Node.js"
-		brew install node@20
-
-		# echo "Configure Node.js"
-		# nvm use node 20
-	fi
+	echo "Installing Homebrew casks..."
+	for cask in "${casks[@]}"; do
+		if ! brew list --cask "$cask" &>/dev/null; then
+			echo "Installing $cask..."
+			brew install --cask "$cask"
+		else
+			echo "$cask is already installed."
+		fi
+	done
 }
 
-setup_yarn() {
-	echo "Configure Yarn"
-	yarn config set strict-ssl false
-	echo 'export NODE_OPTIONS=--openssl-legacy-provider' >> ~/.zshrc
-	echo 'export NODE_TLS_REJECT_UNAUTHORIZED=0' >> ~/.zshrc
-}
-
-setup_git() {
-  echo "Confgiure Git with $USER_FULL_NAME and $USER_EMAIL"
-  git config --global user.name "$USER_FULL_NAME"
-  git config --global user.email "$USER_EMAIL"
+configure_git() {
+	echo "Configuring Git with $USER_FULL_NAME and $USER_EMAIL..."
+	git config --global user.name "$USER_FULL_NAME"
+	git config --global user.email "$USER_EMAIL"
 }
 
 setup_ssh_keys() {
-	SSH_CONFIG_DIRECTORY="$HOME/.ssh"
-	SSH_KEY_NAME="id_ed25519"
+	local ssh_key_path="$HOME/.ssh/id_ed25519"
+	if [ -f "$ssh_key_path" ]; then
+		echo "SSH key already exists. Skipping generation."
+	else
+		echo "Generating SSH keys with $USER_EMAIL..."
+		ssh-keygen -t ed25519 -C "$USER_EMAIL" -f "$ssh_key_path" -N ""
+	fi
 
-	echo "Generating SSH keys with $USER_EMAIL"
-	ssh-keygen -t ed25519 -C "$USER_EMAIL"
-
-	echo "Starting SSH agent in the background"
 	eval "$(ssh-agent -s)"
 
-	echo "Config SSH keys"
-	# Please DO NOT change the indent of this block
-	cat << EOF > "$SSH_CONFIG_DIRECTORY/config"
+	# Create a robust SSH config for GitHub over HTTPS
+	local ssh_config_path="$HOME/.ssh/config"
+	if ! grep -q "Host github.com" "$ssh_config_path" 2>/dev/null; then
+		echo "Configuring SSH for GitHub..."
+		# Using '>>' to append safely
+		cat <<EOF >>"$ssh_config_path"
+
+# GitHub configuration
 Host github.com
-HostName ssh.github.com
-Port 443
-User git
-IgnoreUnknown UseKeychain
-AddKeysToAgent yes
-UseKeychain yes
-IdentityFile ~/.ssh/id_ed25519
+  HostName ssh.github.com
+  Port 443
+  User git
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentityFile $ssh_key_path
 EOF
+	fi
 
-	echo "Add SSH private key to ssh-agent and store passphrase in keychain"
-	ssh-add --apple-use-keychain "$SSH_CONFIG_DIRECTORY/$SSH_KEY_NAME"
+	ssh-add --apple-use-keychain "$ssh_key_path"
 
-	echo "SSH public key ($SSH_CONFIG_DIRECTORY/$SSH_KEY_NAME) is copied to your clipboard, please add it to GitHub account."
-	echo "Reference: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account"
-	cat "$SSH_CONFIG_DIRECTORY/$SSH_KEY_NAME.pub" | pbcopy
+	echo "SSH public key is copied to your clipboard. Add it to your GitHub account."
+	pbcopy < "${ssh_key_path}.pub"
 	wait_for_enter
 }
 
+configure_karabiner() {
+	echo "Configuring Karabiner-Elements..."
+	local repo_path="$HOME/Developer/karabiner"
+	local config_path="$HOME/.config/karabiner"
 
-setup_visual_studio_code() {
-	if ! command -v code >/dev/null 2>&1; then
-		echo "Install Visual Studio Code"
-		brew install visual-studio-code
-	fi
-}
-
-setup_karabiner_elements() {
-	if ! brew list --cask | grep karabiner-elements >/dev/null 2>&1; then
-		echo "Installing Karabiner Elements"
-		brew install --cask karabiner-elements
+	if [ ! -d "$repo_path" ]; then
+		echo "Cloning Karabiner config repository..."
+		git clone "https://github.com/yashcrest/karabiner" "$repo_path"
 	else
-		echo "Karabiner-elements is already installed"
+		echo "Karabiner config repository already exists."
 	fi
 
-	GITHUB_LINK=https://github.com/yashcrest/karabiner
-	KARABINER_PATH=~/.config/karabiner
-	echo "Cloning Karabiner elements config from: $GITHUB_LINK"
-	cd ~/Developer/ && git clone $GITHUB_LINK
-	ln -s ~/Developer/karabiner ~/.config
-	if $KARABINER_PATH then
-		echo
-		rm -rf $KARABINER_PATH
+	# Safely back up existing config before creating symlink
+	if [ -e "$config_path" ]; then
+		echo "Backing up existing Karabiner config to ${config_path}.bak..."
+		mv "$config_path" "${config_path}.bak"
 	fi
-}
-
-setup_oh_my_zsh () {
-	if [! -d "$HOME/.oh-my-zsh"]; then
-		echo "Installing oh-my-zsh"
-		sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-	else
-		echo "oh-my-zsh is already installed"
-	fi
-}
-
-setup_powerlevel10k () {
 	
+	mkdir -p "$(dirname "$config_path")"
+	ln -s "$repo_path" "$config_path"
+	echo "Karabiner-Elements configured."
 }
 
-# Setup
+setup_oh_my_zsh() {
+	if [ ! -d "$HOME/.oh-my-zsh" ]; then
+		echo "Installing Oh My Zsh..."
+		sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+	else
+		echo "Oh My Zsh is already installed."
+	fi
+}
+
+configure_node_env() {
+	echo "Configuring Node.js environment variables in .zshrc..."
+	if ! grep -q "NODE_OPTIONS" "$HOME/.zshrc"; then
+		cat <<EOF >>"$HOME/.zshrc"
+
+# Custom Node.js Environment
+export NODE_OPTIONS=--openssl-legacy-provider
+export NODE_EXTRA_CA_CERTS=/Library/Application\ Support/Netskope/STAgent/data/nscert.pem
+EOF
+	fi
+}
+
+
+# --- Main Execution ---
 
 show_intro
 wait_for_enter
-get_user_email
-get_user_full_name
+
+get_user_info
 setup_homebrew
-setup_node
-setup_yarn
-setup_git
-# setup_ssh_keys
-setup_visual_studio_code
-setup_karabiner_elements
+install_packages
+configure_git
+setup_ssh_keys
+configure_karabiner
 setup_oh_my_zsh
-setup_powerlevel10k
+configure_node_env
+
+echo "✅ Mac setup complete!"
