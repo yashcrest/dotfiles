@@ -115,11 +115,11 @@ setup_ssh_keys() {
 
 	eval "$(ssh-agent -s)"
 
-	# Create a robust SSH config for GitHub over HTTPS
+
 	local ssh_config_path="$HOME/.ssh/config"
 	if ! grep -q "Host github.com" "$ssh_config_path" 2>/dev/null; then
 		echo "Configuring SSH for GitHub..."
-		# Using '>>' to append safely
+
 		cat <<EOF >>"$ssh_config_path"
 
 # GitHub configuration
