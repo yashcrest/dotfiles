@@ -15,6 +15,7 @@ formulae=(
 
 # List of GUI applications to install
 casks=(
+	arc
 	visual-studio-code
 	github
 	rectangle
@@ -22,10 +23,8 @@ casks=(
 	karabiner-elements
 	notion
 	obsidian
-	maccy
 	webcatalog
 	figma
-	1password
 	cursor
 	warp
 )
